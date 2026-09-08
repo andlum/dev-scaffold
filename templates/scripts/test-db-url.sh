@@ -8,8 +8,8 @@
 # derived from the worktree directory name.
 #
 # Overrides, highest precedence first:
-#   TEST_DATABASE_URL       — the whole URL. CI sets this to its service container.
-#   @@envPrefix@@_TEST_DB   — database name only, against the local Postgres.
+#   TEST_DATABASE_URL — the whole URL. CI sets this to its service container.
+#   @@envPrefix@@_TEST_DB — database name only, against the local Postgres.
 set -euo pipefail
 
 if [[ -n "${TEST_DATABASE_URL:-}" ]]; then
