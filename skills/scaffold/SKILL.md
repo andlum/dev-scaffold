@@ -54,6 +54,11 @@ whether merges to the default branch should deploy.
 build imports but never uses (a DB URL, an API key). Apply without it, run the build, and add it
 only if the build fails on a missing variable.
 
+If the project runs a formatter over everything (Prettier, dprint), exempt the generated files
+rather than reformatting them — `.github/workflows/` in `.prettierignore` or equivalent. Running
+the formatter over them makes them differ from the template, which marks them permanently
+`drifted` and turns every future update into a manual merge.
+
 After applying, verify rather than assume:
 
 ```bash
