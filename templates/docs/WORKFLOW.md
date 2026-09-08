@@ -8,13 +8,13 @@ The short version: **one issue → one branch → one PR → merge@@if:deploy@@ 
 > Scaffolded from `@@scaffoldRepo@@` (`.scaffold.json` records the version). Sections below are
 > yours to edit — the updater will show you a diff rather than clobbering local changes.
 
-## 1. Claim an issue
+## Claim an issue
 
 Work starts from an issue in @@issueTracker@@ that is specified well enough to be built without
 asking questions. Claiming it means moving it to **In Progress** and assigning it before writing
 any code. That status is the lock: if an issue is already In Progress, another session owns it.
 
-## 2. Branch
+## Branch
 
 Never commit to `@@defaultBranch@@`. It takes merges from pull requests with green CI only.
 
@@ -49,7 +49,7 @@ The cheapest guard needs no code at all: start each session by creating its work
 branch, and a session is never sitting on the default branch to push from in the first place.
 
 @@if:postgres@@
-## 3. Work in your own worktree
+## Work in your own worktree
 
 Parallel sessions must not share a checkout. Each session gets a git worktree, and the
 integration-test database is already isolated for you: `scripts/test-db-url.sh` derives a database
@@ -60,7 +60,7 @@ tables mid-test and produce failures that look like real bugs.
 Run `@@dbPrepareCommand@@` once per new worktree (and again after any schema change) to create and
 migrate that database. Override with `@@envPrefix@@_TEST_DB=<name>` if you need a specific one.
 
-## 4. Migrations are the sharp edge of working in parallel
+## Migrations are the sharp edge of working in parallel
 
 Two branches that each generate a migration produce the same sequence number and both append to the
 migration journal — a guaranteed conflict, and one that resolves wrong if you just take both sides.
@@ -70,7 +70,7 @@ generated migration and its journal entry, then regenerate so it is numbered aft
 Never hand-edit the SQL or the journal to renumber.
 @@end@@
 
-## 5. Open a PR
+## Open a PR
 
 The PR body must contain the tracker's closing keyword (e.g. `Closes @@issuePrefix@@-NNN`) so
 merging closes the issue. CI runs @@checks@@@@if:postgres@@, plus the integration suite against a
@@ -79,7 +79,7 @@ throwaway Postgres@@end@@.
 Then stop and hand the PR over for review. Do not merge your own PR.
 
 @@if:deploy@@
-## 6. Merge deploys
+## Merge deploys
 
 Merging to `@@defaultBranch@@` triggers `.github/workflows/deploy.yml`: CI again, then the deploy.
 Deploys are serialised (`concurrency: deploy-production`, no cancellation), so two merges in quick
@@ -89,7 +89,7 @@ Nothing else deploys. Don't deploy by hand — it would ship the working tree, u
 and all, with no CI in front of it.
 @@end@@
 
-## 7. Close the loop
+## Close the loop
 
 Once merged, the issue should be **Done**. Don't leave finished work sitting In Progress: the
 status is what stops another session picking it up.

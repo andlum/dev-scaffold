@@ -32,6 +32,7 @@ const DEFAULTS = {
   packageManager: "pnpm",
   nodeVersion: "24",
   checks: "lint typecheck test",
+  build: true,
   buildEnv: "",
   postgres: false,
   dbUser: "postgres",
@@ -60,12 +61,14 @@ const sha = (s) => createHash("sha256").update(s).digest("hex");
 
 function render(tpl, vars) {
   let out = tpl;
+  // `@@if:key@@` includes when the answer is truthy, `@@if:!key@@` when it is falsy.
+  const keep = (neg, k) => truthy(vars[k]) !== Boolean(neg);
   // Whole-line blocks first, so the conditional's own lines vanish with it.
-  out = out.replace(/^@@if:(\w+)@@[ \t]*\r?\n([\s\S]*?)^@@end@@[ \t]*\r?\n/gm, (_m, k, body) =>
-    truthy(vars[k]) ? body : "",
+  out = out.replace(/^@@if:(!?)(\w+)@@[ \t]*\r?\n([\s\S]*?)^@@end@@[ \t]*\r?\n/gm, (_m, neg, k, body) =>
+    keep(neg, k) ? body : "",
   );
   // Then inline / mid-sentence conditionals.
-  out = out.replace(/@@if:(\w+)@@([\s\S]*?)@@end@@/g, (_m, k, body) => (truthy(vars[k]) ? body : ""));
+  out = out.replace(/@@if:(!?)(\w+)@@([\s\S]*?)@@end@@/g, (_m, neg, k, body) => (keep(neg, k) ? body : ""));
   out = out.replace(/@@(\w+)@@/g, (m, k) => (k in vars ? String(vars[k]) : m));
   return out;
 }

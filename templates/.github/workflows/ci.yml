@@ -17,6 +17,9 @@ jobs:
       node-version: "@@nodeVersion@@"
       package-manager: @@packageManager@@
       checks: "@@checks@@"
+@@if:!build@@
+      build: false
+@@end@@
 @@if:buildEnv@@
       build-env: @@buildEnv@@
 @@end@@

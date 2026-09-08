@@ -24,6 +24,15 @@ ok "fresh apply records manifest"     "$([ -f "$P/.scaffold.json" ] && echo yes)
 ok "fresh apply -> unchanged"         "$(state "$P" docs/WORKFLOW.md)"                      "unchanged"
 ok "test-db-url.sh is executable"     "$([ -x "$P/scripts/test-db-url.sh" ] && echo yes)"   "yes"
 
+# --- build:false, for projects with no build script ------------------------------------------
+B="$T/nobuild"; mkdir -p "$B"
+node "$S" apply --dir "$B" --set build=false >/dev/null
+ok "build=false emits the input"      "$(grep -c '^      build: false$' "$B/.github/workflows/ci.yml")" "1"
+node "$S" apply --dir "$T/nobuild2" --set build=true >/dev/null 2>&1 || mkdir -p "$T/nobuild2"
+node "$S" apply --dir "$T/nobuild2" >/dev/null
+ok "build=true omits the input"       "$(grep -c 'build:' "$T/nobuild2/.github/workflows/ci.yml")"      "0"
+ok "no deploy.yml without a target"   "$([ -f "$T/nobuild2/.github/workflows/deploy.yml" ] && echo yes || echo no)" "no"
+
 # --- a local edit is detected as drift, and update never clobbers it --------------------------
 echo "# project-specific" >> "$P/docs/WORKFLOW.md"
 ok "local edit -> drifted"            "$(state "$P" docs/WORKFLOW.md)"                      "drifted"
