@@ -1,0 +1,30 @@
+# Thin caller. The real CI lives in @@scaffoldRepo@@ and is shared across projects, so changes
+# there arrive here without editing this file. Pin/track the tag in .scaffold.json.
+name: CI
+
+on:
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: @@scaffoldRepo@@/.github/workflows/node-ci.yml@@@scaffoldRef@@
+    with:
+      node-version: "@@nodeVersion@@"
+      package-manager: @@packageManager@@
+      checks: "@@checks@@"
+@@if:buildEnv@@
+      build-env: @@buildEnv@@
+@@end@@
+@@if:postgres@@
+      postgres: true
+      db-user: @@dbUser@@
+      db-password: @@dbPassword@@
+      db-name: @@dbName@@
+      db-prepare-command: @@dbPrepareCommand@@
+      integration-command: @@integrationCommand@@
+@@end@@

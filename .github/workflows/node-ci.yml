@@ -1,0 +1,190 @@
+# Reusable CI for Node projects. Consumers call this instead of copying it, so changes here reach
+# every project on the same tag without a re-apply.
+#
+#   jobs:
+#     ci:
+#       uses: andlum/dev-scaffold/.github/workflows/node-ci.yml@v1
+#       with:
+#         checks: "lint typecheck test"
+#
+# Job names are part of the contract: they become the required-status-check names in consuming
+# repos, so renaming them is a breaking change (cut a new major tag).
+name: node-ci
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "24"
+      package-manager:
+        description: pnpm | npm | yarn
+        type: string
+        default: pnpm
+      install-command:
+        description: Overrides the package-manager default (pnpm/yarn frozen-lockfile, npm ci).
+        type: string
+        default: ""
+      checks:
+        description: >-
+          Space-separated package.json script names, each run as `<pm> run <name>` in order.
+          A loop rather than one step per check because Actions cannot generate steps dynamically;
+          each is wrapped in a log group so a failure still names itself.
+        type: string
+        default: "lint typecheck test"
+      build:
+        type: boolean
+        default: true
+      build-script:
+        type: string
+        default: build
+      build-env:
+        description: >-
+          Newline-separated KEY=VALUE pairs exported before the build. Most projects need at least
+          one placeholder for a var the build imports but never uses (a DB URL, an API key).
+        type: string
+        default: ""
+      postgres:
+        description: Run the integration job against a Postgres service container.
+        type: boolean
+        default: false
+      postgres-image:
+        type: string
+        default: postgres:16-alpine
+      db-user:
+        type: string
+        default: postgres
+      db-password:
+        type: string
+        default: postgres
+      db-name:
+        type: string
+        default: test
+      db-url-env:
+        description: Env var the test suite reads the service-container URL from.
+        type: string
+        default: TEST_DATABASE_URL
+      db-prepare-command:
+        description: Runs before the integration suite, e.g. `pnpm test:db:prepare`.
+        type: string
+        default: ""
+      integration-command:
+        type: string
+        default: pnpm test:integration
+
+jobs:
+  check:
+    name: Lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # pnpm before setup-node: setup-node's pnpm cache needs the store path to already resolve.
+      - uses: pnpm/action-setup@v6
+        if: inputs.package-manager == 'pnpm'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - name: Install
+        env:
+          PM: ${{ inputs.package-manager }}
+          OVERRIDE: ${{ inputs.install-command }}
+        run: |
+          if [ -n "$OVERRIDE" ]; then eval "$OVERRIDE"; exit $?; fi
+          case "$PM" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            npm)  npm ci ;;
+            yarn) yarn install --immutable ;;
+            *)    echo "::error::unknown package-manager '$PM'"; exit 1 ;;
+          esac
+
+      - name: Checks
+        env:
+          PM: ${{ inputs.package-manager }}
+          CHECKS: ${{ inputs.checks }}
+        run: |
+          for c in $CHECKS; do
+            echo "::group::$PM run $c"
+            "$PM" run "$c" || { echo "::error::$PM run $c failed"; exit 1; }
+            echo "::endgroup::"
+          done
+
+      - name: Build env
+        if: inputs.build && inputs.build-env != ''
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+        run: printf '%s\n' "$BUILD_ENV" >> "$GITHUB_ENV"
+
+      - name: Build
+        if: inputs.build
+        env:
+          PM: ${{ inputs.package-manager }}
+          SCRIPT: ${{ inputs.build-script }}
+        run: |
+          "$PM" run "$SCRIPT"
+
+  integration:
+    name: Integration tests
+    if: inputs.postgres
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
+        env:
+          POSTGRES_USER: ${{ inputs.db-user }}
+          POSTGRES_PASSWORD: ${{ inputs.db-password }}
+          POSTGRES_DB: ${{ inputs.db-name }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.db-user }} -d ${{ inputs.db-name }}"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        if: inputs.package-manager == 'pnpm'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - name: Install
+        env:
+          PM: ${{ inputs.package-manager }}
+          OVERRIDE: ${{ inputs.install-command }}
+        run: |
+          if [ -n "$OVERRIDE" ]; then eval "$OVERRIDE"; exit $?; fi
+          case "$PM" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            npm)  npm ci ;;
+            yarn) yarn install --immutable ;;
+            *)    echo "::error::unknown package-manager '$PM'"; exit 1 ;;
+          esac
+
+      # Set explicitly so any per-worktree derivation the project does locally short-circuits and
+      # targets the service container instead.
+      - name: Export database URL
+        env:
+          NAME: ${{ inputs.db-url-env }}
+          URL: postgres://${{ inputs.db-user }}:${{ inputs.db-password }}@localhost:5432/${{ inputs.db-name }}
+        run: printf '%s=%s\n' "$NAME" "$URL" >> "$GITHUB_ENV"
+
+      - name: Prepare the test database
+        if: inputs.db-prepare-command != ''
+        env:
+          CMD: ${{ inputs.db-prepare-command }}
+        run: eval "$CMD"
+
+      - name: Integration tests
+        env:
+          CMD: ${{ inputs.integration-command }}
+        run: eval "$CMD"

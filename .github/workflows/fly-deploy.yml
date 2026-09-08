@@ -1,0 +1,44 @@
+# Reusable Fly.io deploy. The caller owns `concurrency` (serialising deploys is a property of the
+# environment being deployed to, not of this workflow) and owns running CI first via `needs:`.
+name: fly-deploy
+
+on:
+  workflow_call:
+    inputs:
+      args:
+        description: >-
+          Passed to `flyctl deploy`. --remote-only builds on Fly's builder rather than the runner.
+        type: string
+        default: --remote-only
+      app:
+        description: Overrides the app name in fly.toml. Usually leave empty.
+        type: string
+        default: ""
+      working-directory:
+        type: string
+        default: "."
+    secrets:
+      FLY_API_TOKEN:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy to Fly
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: flyctl deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          ARGS: ${{ inputs.args }}
+          APP: ${{ inputs.app }}
+        run: |
+          if [ -n "$APP" ]; then set -- --app "$APP"; else set --; fi
+          # shellcheck disable=SC2086 -- ARGS is a caller-supplied flag list, split on purpose.
+          flyctl deploy $ARGS "$@"

@@ -1,0 +1,18 @@
+feature	push feature branch	{"tool_name":"Bash","tool_input":{"command":"git push -u origin HEAD"}}	0
+feature	push origin main	{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}	2
+feature	push HEAD:main	{"tool_name":"Bash","tool_input":{"command":"git push origin HEAD:main"}}	2
+feature	commit on feature branch	{"tool_name":"Bash","tool_input":{"command":"git commit -m wip"}}	0
+feature	read-only git	{"tool_name":"Bash","tool_input":{"command":"git status"}}	0
+feature	word main in an unrelated command	{"tool_name":"Bash","tool_input":{"command":"grep -rn main src"}}	0
+feature	non-git tool call	{"tool_name":"Read","tool_input":{"command":"git push origin main"}}	0
+main	bare push while on main	{"tool_name":"Bash","tool_input":{"command":"git push"}}	2
+main	push -u origin HEAD while on main	{"tool_name":"Bash","tool_input":{"command":"git push -u origin HEAD"}}	2
+main	commit while on main	{"tool_name":"Bash","tool_input":{"command":"git commit -aq -m x"}}	2
+main	read-only git on main	{"tool_name":"Bash","tool_input":{"command":"git log --oneline -5"}}	0
+main	branching off main	{"tool_name":"Bash","tool_input":{"command":"git checkout -b feat"}}	0
+trunk	commit while on trunk	{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}	2
+trunk	push while on trunk	{"tool_name":"Bash","tool_input":{"command":"git push"}}	2
+trunkfeat	commit on a feature branch	{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}	0
+trunkfeat	push targeting trunk	{"tool_name":"Bash","tool_input":{"command":"git push origin HEAD:trunk"}}	2
+trunkfeat	push feature branch	{"tool_name":"Bash","tool_input":{"command":"git push -u origin HEAD"}}	0
+trunkfeat	main is not special when trunk is default	{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}	0
