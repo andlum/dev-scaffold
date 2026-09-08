@@ -138,11 +138,11 @@ function resolveAnswers(dir, args) {
   return { answers, manifest };
 }
 
-function saveManifest(dir, answers, files) {
+function saveManifest(dir, answers, fileHashes) {
   const manifest = {
     scaffold: { repo: answers.scaffoldRepo, ref: answers.scaffoldRef, version: VERSION },
     answers,
-    files: Object.fromEntries(files.map((f) => [f.out, sha(f.content)])),
+    files: fileHashes,
   };
   writeFileSync(join(dir, MANIFEST), JSON.stringify(manifest, null, 2) + "\n");
 }
@@ -181,25 +181,23 @@ if (cmd === "status") {
 if (cmd === "apply" || cmd === "update") {
   const written = [];
   const staged = [];
+  const hashes = { ...(manifest?.files ?? {}) };
   for (const { file, state } of states) {
     const overwritable = state === "new" || state === "unchanged" || state === "stale" || (args.force && cmd === "apply");
     if (overwritable) {
       if (!args.dryRun) write(dir, file.out, file.content, file.mode);
+      hashes[file.out] = sha(file.content);
       if (state !== "unchanged") written.push(`${state.padEnd(10)} ${file.out}`);
     } else {
+      // Leave its recorded hash exactly as it was. Updating it to what is on disk would reclassify
+      // the file as "stale" -- safe to overwrite -- and the next update would silently destroy the
+      // project's edit. Deleting it would lose the distinction between "edited" and "never ours".
       const pending = join(".scaffold/pending", file.out);
       if (!args.dryRun) write(dir, pending, file.content, file.mode);
       staged.push(`${state.padEnd(10)} ${file.out}  ->  ${pending}`);
     }
   }
-  // Record only what is actually on disk, so a staged file stays "drifted" until it is merged.
-  if (!args.dryRun) {
-    const onDisk = files.map((f) => ({
-      out: f.out,
-      content: existsSync(join(dir, f.out)) ? readFileSync(join(dir, f.out), "utf8") : f.content,
-    }));
-    saveManifest(dir, answers, onDisk);
-  }
+  if (!args.dryRun) saveManifest(dir, answers, hashes);
   console.log(written.length ? "written:\n  " + written.join("\n  ") : "nothing to write");
   if (staged.length) {
     console.log("\nstaged for merge (NOT applied — the project edited these):\n  " + staged.join("\n  "));
