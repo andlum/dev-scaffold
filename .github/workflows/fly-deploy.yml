@@ -17,6 +17,10 @@ on:
       working-directory:
         type: string
         default: "."
+      timeout-minutes:
+        description: Caps a hung deploy; the platform default is six hours.
+        type: number
+        default: 30
     secrets:
       FLY_API_TOKEN:
         required: true
@@ -25,6 +29,7 @@ jobs:
   deploy:
     name: Deploy to Fly
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
@@ -40,5 +45,6 @@ jobs:
           APP: ${{ inputs.app }}
         run: |
           if [ -n "$APP" ]; then set -- --app "$APP"; else set --; fi
-          # shellcheck disable=SC2086 -- ARGS is a caller-supplied flag list, split on purpose.
+          # ARGS is a caller-supplied flag list, split on purpose.
+          # shellcheck disable=SC2086
           flyctl deploy $ARGS "$@"

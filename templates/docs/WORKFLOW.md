@@ -3,7 +3,7 @@
 @@projectName@@ is worked on by several agent sessions at once. The rules below exist so those
 sessions don't collide — in git, in the database, or in production.
 
-The short version: **one issue → one branch → one PR → merge@@if:deploy@@ → automatic deploy@@end@@.**
+The short version: **one issue → one branch → one PR → merge@@if:deploy@@ → deploy from the button@@end@@.**
 
 > Scaffolded from `@@scaffoldRepo@@` (`.scaffold.json` records the version). Sections below are
 > yours to edit — the updater will show you a diff rather than clobbering local changes.
@@ -16,7 +16,7 @@ any code. That status is the lock: if an issue is already In Progress, another s
 
 ## Branch
 
-Never commit to `@@defaultBranch@@`. It takes merges from pull requests with green CI only.
+Never commit to `@@defaultBranch@@`. It takes merges from pull requests that passed their checks.
 
 That rule is **not enforced by GitHub** unless this repo is public or on a paid plan — branch
 protection and rulesets are gated behind both.
@@ -73,17 +73,31 @@ Never hand-edit the SQL or the journal to renumber.
 ## Open a PR
 
 The PR body must contain the tracker's closing keyword (e.g. `Closes @@issuePrefix@@-NNN`) so
-merging closes the issue. CI runs @@checks@@@@if:postgres@@, plus the integration suite against a
-throwaway Postgres@@end@@.
+merging closes the issue.
+
+Run the checks yourself before opening it: `@@checks@@`@@if:postgres@@, plus the integration
+suite@@end@@@@if:build@@, then the build@@end@@. That local run is the PR's gate. GitHub Actions is
+rationed to stay inside the free plan's 2,000 private-repo minutes a month, so CI on GitHub does not
+run on every push. It runs:
+
+- on a PR labelled `@@ciLabel@@`, once, when it is marked ready for review (or labelled while ready).
+  Use the label when a change is risky enough to want a clean-machine run before merging;
+- nightly on `@@defaultBranch@@`, to catch two PRs that each passed but break together;
+@@if:deploy@@
+- before every deploy.
+@@end@@
+A commit that already passed is not run again. Don't add `push` or every-push `pull_request`
+triggers to a workflow: that is what spent the minutes before.
 
 Then stop and hand the PR over for review. Do not merge your own PR.
 
 @@if:deploy@@
-## Merge deploys
+## Deploys
 
-Merging to `@@defaultBranch@@` triggers `.github/workflows/deploy.yml`: CI again, then the deploy.
-Deploys are serialised (`concurrency: deploy-production`, no cancellation), so two merges in quick
-succession deploy in order rather than racing.
+Merging does not deploy. The owner deploys from the button: Actions → Deploy → Run workflow on
+`@@defaultBranch@@`. That runs `.github/workflows/deploy.yml`: CI (skipped if the commit already
+passed), then the deploy. Deploys are serialised (`concurrency: deploy-production`, no
+cancellation), so two in quick succession run in order rather than racing.
 
 Nothing else deploys. Don't deploy by hand — it would ship the working tree, uncommitted changes
 and all, with no CI in front of it.
@@ -106,6 +120,9 @@ status is what stops another session picking it up.
 
 Enable a ruleset on `@@defaultBranch@@`: require a pull request (**0 required approvals** — GitHub
 won't let you approve your own PR, so 1 would lock you out of merging your own work), require
-conversation resolution, require the `Lint, typecheck, unit tests, build`@@if:postgres@@ and
-`Integration tests`@@end@@ checks, require branches to be up to date before merging, block force
-pushes, restrict deletions, and leave the bypass list empty.
+conversation resolution, block force pushes, restrict deletions, and leave the bypass list empty.
+
+Don't require status checks while CI is rationed: a required check only passes if CI runs on every
+PR, which is the spend the rationing removed. If minutes stop being scarce, drop `types:` from the
+`pull_request` trigger in `ci.yml` and the `pr-label` input, then require `Lint, typecheck, unit
+tests, build`. It covers the integration suite too (`single-job`).

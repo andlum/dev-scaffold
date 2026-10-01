@@ -33,6 +33,16 @@ node "$S" apply --dir "$T/nobuild2" >/dev/null
 ok "build=true omits the input"       "$(grep -c 'build:' "$T/nobuild2/.github/workflows/ci.yml")"      "0"
 ok "no deploy.yml without a target"   "$([ -f "$T/nobuild2/.github/workflows/deploy.yml" ] && echo yes || echo no)" "no"
 
+# --- rationed CI (1.2.0) ------------------------------------------------------------------------
+ok "ci.yml has no every-push trigger" "$(grep -cE '^  (push|pull_request):$' "$P/.github/workflows/ci.yml")" "1"
+ok "ci.yml PR trigger is ready/label" "$(grep -c 'types: \[ready_for_review, labeled\]' "$P/.github/workflows/ci.yml")" "1"
+ok "ci.yml default label is ci"       "$(grep -c '^      pr-label: "ci"$' "$P/.github/workflows/ci.yml")" "1"
+ok "ci.yml opts in to single-job"     "$(grep -c '^      single-job: true$' "$P/.github/workflows/ci.yml")" "1"
+L="$T/label"; mkdir -p "$L"
+node "$S" apply --dir "$L" --set ciLabel=tier:data >/dev/null
+ok "ciLabel answer reaches ci.yml"    "$(grep -c '^      pr-label: "tier:data"$' "$L/.github/workflows/ci.yml")" "1"
+ok "deploy.yml is button-only"        "$(grep -c '^  push:' "$P/.github/workflows/deploy.yml")" "0"
+
 # --- a local edit is detected as drift, and update never clobbers it --------------------------
 echo "# project-specific" >> "$P/docs/WORKFLOW.md"
 ok "local edit -> drifted"            "$(state "$P" docs/WORKFLOW.md)"                      "drifted"
@@ -57,10 +67,14 @@ node "$S" apply --dir "$Q" "${A[@]}" >/dev/null
 ok "2nd apply still untouched"        "$(cat "$Q/docs/WORKFLOW.md")"                        "our own workflow doc"
 
 # --- an untouched file follows the scaffold forward -------------------------------------------
-printf '\n# added upstream\n' >> "$ROOT/templates/docs/WORKFLOW.md"
+# Restore from a copy, not git: `git checkout` would also discard uncommitted template edits.
+TPL="$ROOT/templates/docs/WORKFLOW.md"
+cp "$TPL" "$T/WORKFLOW.md.orig"
+trap 'cp "$T/WORKFLOW.md.orig" "$TPL"; rm -rf "$T"' EXIT
+printf '\n# added upstream\n' >> "$TPL"
 R="$T/fresh2"; mkdir -p "$R"
 node "$S" apply --dir "$R" "${A[@]}" >/dev/null
-git -C "$ROOT" checkout -- templates/docs/WORKFLOW.md 2>/dev/null
+cp "$T/WORKFLOW.md.orig" "$TPL"
 ok "untouched file -> stale"          "$(state "$R" docs/WORKFLOW.md)"                      "stale"
 node "$S" update --dir "$R" >/dev/null
 ok "stale file was rewritten"         "$(state "$R" docs/WORKFLOW.md)"                      "unchanged"

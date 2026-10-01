@@ -9,6 +9,14 @@
 #
 # Job names are part of the contract: they become the required-status-check names in consuming
 # repos, so renaming them is a breaking change (cut a new major tag).
+#
+# Rationing (GitHub Free has 2,000 private-repo minutes a month). Every input below defaults to the
+# pre-1.2 behaviour; the scaffold's caller template opts in to all of them:
+#   single-job     one job instead of two: one install, one round-up to the minute
+#   skip-if-green  do nothing if this commit already passed (nightly on an idle main, a deploy of a
+#                  commit CI already passed)
+#   pr-label       on pull_request, run only for a non-draft PR carrying this label
+#   timeout-minutes  cap a hung job; the platform default is six hours
 name: node-ci
 
 on:
@@ -71,24 +79,101 @@ on:
       integration-command:
         type: string
         default: pnpm test:integration
+      single-job:
+        description: >-
+          Run integration tests inside the check job, against a Postgres service on that job, instead
+          of in a second job. Saves an install and a per-job round-up. The job keeps its name.
+        type: boolean
+        default: false
+      skip-if-green:
+        description: >-
+          Skip every step if this commit already passed: the latest completed check job on the
+          commit succeeded, and so did the latest integration job if one ran. Needs `checks: read`
+          on the caller's token; any API error runs the work rather than skipping it.
+        type: boolean
+        default: false
+      pr-label:
+        description: >-
+          On pull_request events, run only when a non-draft PR carrying this label is marked ready
+          for review, or is given this label while ready. Other events always run. Empty runs on
+          every pull_request event.
+        type: string
+        default: ""
+      timeout-minutes:
+        type: number
+        default: 20
 
 jobs:
   check:
     name: Lint, typecheck, unit tests, build
+    # pr-label gate. Kept identical to the integration job's.
+    if: >-
+      inputs.pr-label == '' || github.event_name != 'pull_request' ||
+      (!github.event.pull_request.draft &&
+        ((github.event.action == 'ready_for_review' &&
+          contains(github.event.pull_request.labels.*.name, inputs.pr-label)) ||
+         (github.event.action == 'labeled' && github.event.label.name == inputs.pr-label)))
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+
+    # Only in single-job mode: an empty image means the service is not started.
+    services:
+      postgres:
+        image: ${{ (inputs.single-job && inputs.postgres) && inputs.postgres-image || '' }}
+        env:
+          POSTGRES_USER: ${{ inputs.db-user }}
+          POSTGRES_PASSWORD: ${{ inputs.db-password }}
+          POSTGRES_DB: ${{ inputs.db-name }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.db-user }} -d ${{ inputs.db-name }}"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
+      # First, so a skip costs no checkout or install. Kept identical to the integration job's.
+      - name: Skip if this commit already passed
+        id: gate
+        if: inputs.skip-if-green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Check-run names carry the caller's job prefixes ("ci / ci / Integration tests"), so
+          # compare on the last segment. Cancelled and skipped runs say nothing about the code.
+          if ! runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100" --jq '.check_runs[]'); then
+            echo "::notice::Could not read this commit's check runs; running CI."
+            exit 0
+          fi
+          green=$(printf '%s\n' "$runs" | jq -s '
+            [ .[] | select(.status == "completed" and (.conclusion | IN("skipped", "cancelled") | not))
+                  | { n: (.name | sub("^.* / "; "")), c: .conclusion, t: .completed_at } ] as $r
+            | def latest($n): $r | map(select(.n == $n)) | sort_by(.t) | last | .c;
+              latest("Lint, typecheck, unit tests, build") == "success" and
+              (latest("Integration tests") | . == null or . == "success")')
+          if [ "$green" = "true" ]; then
+            echo "::notice::$SHA already passed CI; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.gate.outputs.skip != 'true'
 
       # pnpm before setup-node: setup-node's pnpm cache needs the store path to already resolve.
       - uses: pnpm/action-setup@v6
-        if: inputs.package-manager == 'pnpm'
+        if: steps.gate.outputs.skip != 'true' && inputs.package-manager == 'pnpm'
 
       - uses: actions/setup-node@v7
+        if: steps.gate.outputs.skip != 'true'
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager }}
 
       - name: Install
+        if: steps.gate.outputs.skip != 'true'
         env:
           PM: ${{ inputs.package-manager }}
           OVERRIDE: ${{ inputs.install-command }}
@@ -102,6 +187,7 @@ jobs:
           esac
 
       - name: Checks
+        if: steps.gate.outputs.skip != 'true'
         env:
           PM: ${{ inputs.package-manager }}
           CHECKS: ${{ inputs.checks }}
@@ -112,14 +198,35 @@ jobs:
             echo "::endgroup::"
           done
 
+      # Single-job integration runs before the build env is exported, so it sees the same
+      # environment the separate integration job does. The URL is exported per step, not through
+      # GITHUB_ENV, so it cannot leak into the build.
+      - name: Prepare the test database
+        if: >-
+          steps.gate.outputs.skip != 'true' && inputs.single-job && inputs.postgres &&
+          inputs.db-prepare-command != ''
+        env:
+          NAME: ${{ inputs.db-url-env }}
+          URL: postgres://${{ inputs.db-user }}:${{ inputs.db-password }}@localhost:5432/${{ inputs.db-name }}
+          CMD: ${{ inputs.db-prepare-command }}
+        run: export "$NAME=$URL"; eval "$CMD"
+
+      - name: Integration tests
+        if: steps.gate.outputs.skip != 'true' && inputs.single-job && inputs.postgres
+        env:
+          NAME: ${{ inputs.db-url-env }}
+          URL: postgres://${{ inputs.db-user }}:${{ inputs.db-password }}@localhost:5432/${{ inputs.db-name }}
+          CMD: ${{ inputs.integration-command }}
+        run: export "$NAME=$URL"; eval "$CMD"
+
       - name: Build env
-        if: inputs.build && inputs.build-env != ''
+        if: steps.gate.outputs.skip != 'true' && inputs.build && inputs.build-env != ''
         env:
           BUILD_ENV: ${{ inputs.build-env }}
         run: printf '%s\n' "$BUILD_ENV" >> "$GITHUB_ENV"
 
       - name: Build
-        if: inputs.build
+        if: steps.gate.outputs.skip != 'true' && inputs.build
         env:
           PM: ${{ inputs.package-manager }}
           SCRIPT: ${{ inputs.build-script }}
@@ -128,8 +235,16 @@ jobs:
 
   integration:
     name: Integration tests
-    if: inputs.postgres
+    # Kept identical to the check job's pr-label gate, plus: not in single-job mode.
+    if: >-
+      inputs.postgres && !inputs.single-job &&
+      (inputs.pr-label == '' || github.event_name != 'pull_request' ||
+      (!github.event.pull_request.draft &&
+        ((github.event.action == 'ready_for_review' &&
+          contains(github.event.pull_request.labels.*.name, inputs.pr-label)) ||
+         (github.event.action == 'labeled' && github.event.label.name == inputs.pr-label))))
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
 
     services:
       postgres:
@@ -147,17 +262,45 @@ jobs:
           --health-retries 10
 
     steps:
+      - name: Skip if this commit already passed
+        id: gate
+        if: inputs.skip-if-green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Check-run names carry the caller's job prefixes ("ci / ci / Integration tests"), so
+          # compare on the last segment. Cancelled and skipped runs say nothing about the code.
+          if ! runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100" --jq '.check_runs[]'); then
+            echo "::notice::Could not read this commit's check runs; running CI."
+            exit 0
+          fi
+          green=$(printf '%s\n' "$runs" | jq -s '
+            [ .[] | select(.status == "completed" and (.conclusion | IN("skipped", "cancelled") | not))
+                  | { n: (.name | sub("^.* / "; "")), c: .conclusion, t: .completed_at } ] as $r
+            | def latest($n): $r | map(select(.n == $n)) | sort_by(.t) | last | .c;
+              latest("Lint, typecheck, unit tests, build") == "success" and
+              (latest("Integration tests") | . == null or . == "success")')
+          if [ "$green" = "true" ]; then
+            echo "::notice::$SHA already passed CI; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.gate.outputs.skip != 'true'
 
       - uses: pnpm/action-setup@v6
-        if: inputs.package-manager == 'pnpm'
+        if: steps.gate.outputs.skip != 'true' && inputs.package-manager == 'pnpm'
 
       - uses: actions/setup-node@v7
+        if: steps.gate.outputs.skip != 'true'
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager }}
 
       - name: Install
+        if: steps.gate.outputs.skip != 'true'
         env:
           PM: ${{ inputs.package-manager }}
           OVERRIDE: ${{ inputs.install-command }}
@@ -173,18 +316,20 @@ jobs:
       # Set explicitly so any per-worktree derivation the project does locally short-circuits and
       # targets the service container instead.
       - name: Export database URL
+        if: steps.gate.outputs.skip != 'true'
         env:
           NAME: ${{ inputs.db-url-env }}
           URL: postgres://${{ inputs.db-user }}:${{ inputs.db-password }}@localhost:5432/${{ inputs.db-name }}
         run: printf '%s=%s\n' "$NAME" "$URL" >> "$GITHUB_ENV"
 
       - name: Prepare the test database
-        if: inputs.db-prepare-command != ''
+        if: steps.gate.outputs.skip != 'true' && inputs.db-prepare-command != ''
         env:
           CMD: ${{ inputs.db-prepare-command }}
         run: eval "$CMD"
 
       - name: Integration tests
+        if: steps.gate.outputs.skip != 'true'
         env:
           CMD: ${{ inputs.integration-command }}
         run: eval "$CMD"

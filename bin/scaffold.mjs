@@ -32,6 +32,7 @@ const DEFAULTS = {
   packageManager: "pnpm",
   nodeVersion: "24",
   checks: "lint typecheck test",
+  ciLabel: "ci",
   build: true,
   buildEnv: "",
   postgres: false,
