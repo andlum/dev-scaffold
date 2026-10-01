@@ -41,6 +41,9 @@ ok "ci.yml opts in to single-job"     "$(grep -c '^      single-job: true$' "$P/
 L="$T/label"; mkdir -p "$L"
 node "$S" apply --dir "$L" --set ciLabel=tier:data >/dev/null
 ok "ciLabel answer reaches ci.yml"    "$(grep -c '^      pr-label: "tier:data"$' "$L/.github/workflows/ci.yml")" "1"
+E="$T/env"; mkdir -p "$E"
+node "$S" apply --dir "$E" --set $'buildEnv=A=1\nB=2' >/dev/null
+ok "multi-line buildEnv stays indented" "$(grep -cE '^        (A=1|B=2)$' "$E/.github/workflows/ci.yml")" "2"
 ok "deploy.yml is button-only"        "$(grep -c '^  push:' "$P/.github/workflows/deploy.yml")" "0"
 
 # --- a local edit is detected as drift, and update never clobbers it --------------------------

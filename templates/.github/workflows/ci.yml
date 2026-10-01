@@ -42,7 +42,8 @@ jobs:
       build: false
 @@end@@
 @@if:buildEnv@@
-      build-env: @@buildEnv@@
+      build-env: |
+        @@buildEnv@@
 @@end@@
 @@if:postgres@@
       postgres: true
