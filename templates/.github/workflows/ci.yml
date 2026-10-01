@@ -1,14 +1,32 @@
 # Thin caller. The real CI lives in @@scaffoldRepo@@ and is shared across projects, so changes
 # there arrive here without editing this file. Pin/track the tag in .scaffold.json.
+#
+# Rationed to stay inside GitHub Free's 2,000 private-repo minutes a month. Every PR is gated
+# locally (docs/WORKFLOW.md); Actions runs only:
+#   - before every deploy (deploy.yml calls this through workflow_call);
+#   - nightly on @@defaultBranch@@, to catch two PRs that each passed locally but break together;
+#   - on a PR labelled `@@ciLabel@@`, when it is marked ready for review (or labelled while ready).
+# A commit that already passed is not re-run (skip-if-green), so an idle nightly or a deploy of a
+# commit CI already passed costs about a minute.
 name: CI
 
 on:
   pull_request:
+    types: [ready_for_review, labeled]
+  schedule:
+    - cron: "17 7 * * *" # 07:17 UTC daily; off the hour, when GitHub's scheduler is busiest
   workflow_call:
 
+# The label is in the key so that adding an unrelated label (a run whose jobs all skip) cannot
+# cancel a real run already in progress on the same PR.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event.label.name }}
   cancel-in-progress: true
+
+# checks: read lets skip-if-green see whether this commit already passed.
+permissions:
+  contents: read
+  checks: read
 
 jobs:
   ci:
@@ -17,6 +35,9 @@ jobs:
       node-version: "@@nodeVersion@@"
       package-manager: @@packageManager@@
       checks: "@@checks@@"
+      single-job: true
+      skip-if-green: true
+      pr-label: "@@ciLabel@@"
 @@if:!build@@
       build: false
 @@end@@

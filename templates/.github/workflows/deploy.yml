@@ -1,23 +1,29 @@
-# Every merge to @@defaultBranch@@ deploys. CI runs first as a called workflow, so a red check can
-# never reach production.
+# Deploys only from the Deploy button (Actions → Deploy → Run workflow). Deploying on every merge
+# re-ran CI on each one and was the largest single drain on the free Actions minutes. CI runs first
+# as a called workflow, so a red check can never reach production; a commit that already passed is
+# not re-run.
 name: Deploy
 
 on:
-  push:
-    branches: [@@defaultBranch@@]
   workflow_dispatch:
 
-# Never let two deploys race; queue rather than cancel, so a merged commit is never skipped.
+# Never let two deploys race; queue rather than cancel, so a requested deploy is never skipped.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  checks: read
+
 jobs:
   ci:
+    if: github.ref == 'refs/heads/@@defaultBranch@@'
     uses: ./.github/workflows/ci.yml
 
   deploy:
     needs: ci
+    if: github.ref == 'refs/heads/@@defaultBranch@@'
     uses: @@scaffoldRepo@@/.github/workflows/fly-deploy.yml@@@scaffoldRef@@
     secrets:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
