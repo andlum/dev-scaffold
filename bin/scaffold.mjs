@@ -70,7 +70,13 @@ function render(tpl, vars) {
   );
   // Then inline / mid-sentence conditionals.
   out = out.replace(/@@if:(!?)(\w+)@@([\s\S]*?)@@end@@/g, (_m, neg, k, body) => (keep(neg, k) ? body : ""));
-  out = out.replace(/@@(\w+)@@/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  // A multi-line answer keeps its placeholder line's indentation on every line, so it can sit
+  // under a YAML block scalar (`build-env: |`) and stay valid.
+  out = out.replace(/@@(\w+)@@/g, (m, k, at, str) => {
+    if (!(k in vars)) return m;
+    const indent = str.slice(str.lastIndexOf("\n", at - 1) + 1, at).match(/^[ \t]*/)[0];
+    return String(vars[k]).replace(/\n/g, `\n${indent}`);
+  });
   return out;
 }
 
